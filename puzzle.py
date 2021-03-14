@@ -5,7 +5,7 @@ import time
 class State:
     def __init__(self, size=3, c=None):
         self.size = size
-        self.actions = ['front', 'back', 'left', 'right', 'top', 'bottom']
+        self.actions = ['front', 'back', 'left', 'right', 'top', 'bottom', "afront", "aback", "aleft", "aright", "atop", "abottom"]
         if c:
             self.d = c
             self.__front__ = c["front"]
@@ -200,66 +200,65 @@ class State:
             self.__right__ = self.columns_to_rows(self.__right__)
 
 
-    # current move constraints: can only move clockwise
-    # and can only turn the cube 180 degrees,
-    # turn the front side to the right, causes the first
-    # row of top/bottom to be swapped, and the first row of
-    # left/right to be swapped, and the front face to be inverted
-    # when we rotate a side, we are implementing it assuming that the
-    # user turns their face to that side of the rubik's cube, then 
-    # does a 180 degree left rotation, this simplifies the implementation
+    # rotates the front face 90 degrees clockwise
+    def _turn_front(self):
+        # rotate the face clockwise
+        self.__front__ = self.columns_to_rows(self.__front__)
 
-    def turn_front(self):
-        # invert the front side
-        self.__front__ = self.rotate_side(self.__front__)
-        # swap the first row of the left/right side, and swap 
-        # the last column of the left side with the first column of the right side
-        self.__top__, self.__bottom__ = self.swap_first_row(self.__top__, self.__bottom__)
-        self.__left__, self.__right__ = self.swap_first_last_col(self.__left__, self.__right__)
+        _top = copy.deepcopy(self.__top__)
+        self.__top__[0] = [row[2] for row in self.__left__]
+        self.__left__ = [[row[0], row[1], bot] for row, bot in zip(self.__left__, self.__bottom__[0])]
+        self.__bottom__[0] = list(reversed([row[0] for row in self.__right__]))
+        self.__right__ = [[top, row[1], row[2]] for row, top in zip(self.__right__, reversed(_top[0]))]
         
-    def turn_back(self):
+    def turn_front(self, ccw):
+        self._turn_front()
+        if ccw:
+            self._turn_front()
+            self._turn_front()
+        
+    def turn_back(self, ccw):
         # swap the last row of the left/right sides, and the first
         # row of the top/bottom sides
         # must rotate 90 degress twice
         self.rotate_cube()
         self.rotate_cube()
-        self.turn_front()
+        self.turn_front(ccw)
         self.rotate_cube()
         self.rotate_cube()
 
     
-    def turn_left(self):
+    def turn_left(self, ccw):
         # left become front, front becomes right, right becomes back, back becomes left
         # top gets rotated 90 degrees counter clockwise 
         # (3 6 9 -> 1 2 3) (2 5 8 -> 4 5 6) (1 4 7 -> 7 8 9)
 
         # must turn the cube 90 degrees counter clockwise to face the
+        self.rotate_cube()
+        self.turn_front(ccw)
         # left side of the cube, now as the front, then turn_front
         self.rotate_cube()
-        self.turn_front()
         self.rotate_cube()
         self.rotate_cube()
-        self.rotate_cube()
-
     
-    def turn_right(self):
+    def turn_right(self, ccw):
         # must make 3 90 degree rotations of the cube for the right
         # side to face front
         self.rotate_cube()
         self.rotate_cube()
         self.rotate_cube()
-        self.turn_front()
+        self.turn_front(ccw)
         self.rotate_cube()
 
     
-    def turn_top(self):
+    def turn_top(self, ccw):
         self.flip_cube(forward=True)
-        self.turn_front()
+        self.turn_front(ccw)
         self.flip_cube()
     
-    def turn_bottom(self):
+    def turn_bottom(self, ccw):
         self.flip_cube()
-        self.turn_front()
+        self.turn_front(ccw)
         self.flip_cube(forward=True)
 
     def isGoalState(self):
@@ -277,18 +276,20 @@ class State:
 
 
     def move(self, action):
-        if action == 'left':
-            self.turn_left()
-        elif action == 'right':
-            self.turn_right()
-        elif action == 'front':
-            self.turn_front()
-        elif action == 'back':
-            self.turn_back()
-        elif action == 'top':
-            self.turn_top()
-        elif action == 'bottom':
-            self.turn_bottom()
+        ccw = action[0] == 'a'
+        act = action[1:] if ccw else action
+        if act == 'left':
+            self.turn_left(ccw)
+        elif act == 'right':
+            self.turn_right(ccw)
+        elif act == 'front':
+            self.turn_front(ccw)
+        elif act == 'back':
+            self.turn_back(ccw)
+        elif act == 'top':
+            self.turn_top(ccw)
+        elif act == 'bottom':
+            self.turn_bottom(ccw)
         self.__sides__ = [self.front(), self.back(), self.left(), self.right(), self.top(), self.bottom()]
 
 # check number of pieces on each side of cube that match color
@@ -314,8 +315,6 @@ def num_solved_sides(state):
         # is number of total pieces, side is solved
         if sum(row.count(color) for row in side) == state.size**2:
             solved += 1
-            
-            
     return solved
 
 def num_crosses(state):
@@ -359,25 +358,5 @@ def random_move(cube):
 
 def move(s, action):
     new_state = s.copy()
-    if action == 'left':
-        new_state.turn_left()
-    elif action == 'right':
-        new_state.turn_right()
-    elif action == 'front':
-        new_state.turn_front()
-    elif action == 'back':
-        new_state.turn_back()
-    elif action == 'top':
-        new_state.turn_top()
-    elif action == 'bottom':
-        new_state.turn_bottom()
-    new_state.__sides__ = [new_state.front(), new_state.back(), new_state.left(), new_state.right(), new_state.top(), new_state.bottom()]
+    new_state.move(action)
     return new_state
-
-
-# important features of a rubiks cube
-# num. solved sides, highest priority
-# num. of crosses
-# num. of x's
-# num. of pieces on correct sides
-# num. of vertical/horizontal lines
