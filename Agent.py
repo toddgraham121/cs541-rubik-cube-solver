@@ -37,7 +37,7 @@ class Agent:
         self.five_away = []
         self.six_away = []
         self.last_action = None
-        self.move = {"front": 0, "back": 0, "left": 0, "right": 0, "top": 0, "bottom": 0}
+        self.move = {"front": 0, "back": 0, "left": 0, "right": 0, "top": 0, "bottom": 0, "afront": 0, "aback": 0, "aleft": 0, "aright": 0, "atop": 0, "abottom": 0}
 
 
     def register_patterns(self):
