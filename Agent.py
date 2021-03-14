@@ -10,7 +10,7 @@ class Agent:
     # initialize agent, can be passed a dictionary of Q-Values
     # if it already exists, and a cube, otherwise, initializes new
     # cube if not provided one
-    def __init__(self, QValues={}, cube=None, scramble_depth: int = 5):
+    def __init__(self, QValues={}, scramble_depth: int = 5):
         self.visited = []
         self.visit_count = {}
         self.revisits = 0
