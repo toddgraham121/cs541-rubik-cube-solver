@@ -209,13 +209,16 @@ class State:
     # user turns their face to that side of the rubik's cube, then 
     # does a 180 degree left rotation, this simplifies the implementation
 
+    # def turn_front(self):
+    #     # invert the front side
+    #     self.__front__ = self.rotate_side(self.__front__)
+    #     # swap the first row of the left/right side, and swap 
+    #     # the last column of the left side with the first column of the right side
+    #     self.__top__, self.__bottom__ = self.swap_first_row(self.__top__, self.__bottom__)
+    #     self.__left__, self.__right__ = self.swap_first_last_col(self.__left__, self.__right__)
+    
     def turn_front(self):
-        # invert the front side
-        self.__front__ = self.rotate_side(self.__front__)
-        # swap the first row of the left/right side, and swap 
-        # the last column of the left side with the first column of the right side
-        self.__top__, self.__bottom__ = self.swap_first_row(self.__top__, self.__bottom__)
-        self.__left__, self.__right__ = self.swap_first_last_col(self.__left__, self.__right__)
+        self.__front__ = self.columns_to_rows(self.__front__)
         
     def turn_back(self):
         # swap the last row of the left/right sides, and the first
