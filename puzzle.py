@@ -378,7 +378,7 @@ def shuffle(cube, n=5):
 
 def random_move(cube):
     action = random.choice(cube.actions)
-    print("executing " + action + " 90 rotation")
+    # print("executing " + action + " 90 rotation")
     cube = move(cube, action)
     return cube
 

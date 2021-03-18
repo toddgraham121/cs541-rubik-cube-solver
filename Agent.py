@@ -16,7 +16,8 @@ class Agent:
         self.QV = QValues
         # create or store initial cube state, and store list of actions
         self.start_state = n_move_state(n=scramble_depth)
-        print(self.start_state)
+        self.depth = scramble_depth
+        # print(self.start_state)
         self.curr_state = self.start_state.copy()
         self.actions = self.start_state.actions
         self.move = {"front": 0, "back": 0, "left": 0, "right": 0, "top": 0, "bottom": 0, "afront": 0, "aback": 0,
@@ -31,8 +32,8 @@ class Agent:
         for d in range(1, to_depth + 1):
             reward = (to_depth + 1 - d)
 
+            states_at_depth = []
             for s in states_with_rewards[d - 1]:
-                states_at_depth = []
                 for action in self.actions:
                     s_ = move(s, action)
 
@@ -43,7 +44,7 @@ class Agent:
                             {s_.__hash__(): np.full(12, -1 * reward)})
                         qvTable[s_.__hash__()][self.actions.index(
                             goodAction)] = reward
-                states_with_rewards.append(states_at_depth)
+            states_with_rewards.append(states_at_depth)
 
         self.QV = qvTable
 
@@ -82,31 +83,37 @@ class Agent:
             return f'a{action}'
 
     # explore
-    def QLearn(self, gamma=0.99, steps=20, epsilon=0.9, eta=0.6):
+    def QLearn(self, epochs=100, gamma=0.99, steps=20, epsilon=0.9, eta=0.6, depth_from_baseline=1):
         # execute q learning for specified number of episodes
-        self.curr_state = self.start_state.copy()  # six_move_state()
-        for i in range(steps):
-            if not (self.curr_state.__hash__()) in self.QV.keys():
-                self.QV.update({self.curr_state.__hash__(): np.zeros(12)})
-            # Observe current state
-            state = self.curr_state.copy()
-            # Choose an action using epsilon greedy
-            action = self.chooseAction(epsilon)
-            # Perform the action and receive reward
-            reward = self.reward(state, action)
-            self.curr_state.move(self.actions[action])
-            if not (self.curr_state.__hash__()) in self.QV.keys():
-                self.QV.update({self.curr_state.__hash__(): np.zeros(12)})
-            # Update Q Table
-            self.QV[state.__hash__()][action] = self.QV[state.__hash__()][action] + eta * (
-                reward + gamma*np.max(self.QV[self.curr_state.__hash__()]) - self.QV[state.__hash__()][action])
+        steps_required = np.zeros(epochs)
+        Epsilons = [i / epochs for i in range(epochs)]
+        Epsilons.reverse()
+        for j in range(epochs):
+            self.curr_state = n_move_state(
+                n=self.depth + depth_from_baseline)  # six_move_state()
+            for i in range(steps):
+                if not (self.curr_state.__hash__()) in self.QV.keys():
+                    self.QV.update({self.curr_state.__hash__(): np.zeros(12)})
+                # Observe current state
+                state = self.curr_state.copy()
+                # Choose an action using epsilon greedy
+                action = self.chooseAction(Epsilons[j])
+                # Perform the action and receive reward
+                reward = self.reward(state, action)
+                self.curr_state.move(self.actions[action])
+                if not (self.curr_state.__hash__()) in self.QV.keys():
+                    self.QV.update({self.curr_state.__hash__(): np.zeros(12)})
+                # Update Q Table
+                self.QV[state.__hash__()][action] = self.QV[state.__hash__()][action] + eta * (
+                    reward + gamma*np.max(self.QV[self.curr_state.__hash__()]) - self.QV[state.__hash__()][action])
 
-            # Check for end state
-            if self.curr_state.isGoalState():
-                print('Trained')
-                return i
-        print('Darn')
-        return steps
+                # Check for end state
+                if self.curr_state.isGoalState():
+                    steps_required[j] = i
+                    break
+            if steps_required[j] == 0:
+                steps_required[j] = steps
+        return steps_required
 
     def chooseAction(self, epsilon=0):
         if np.random.rand() < (1 - epsilon):
@@ -115,21 +122,25 @@ class Agent:
             action = np.random.randint(0, 11)
         return action
 
-    def Play(self, max_steps=20):
-        self.curr_state = self.start_state.copy()
+    def Play(self, max_steps=20, depth_from_baseline=1, tests=1):
+        test_steps = np.zeros(tests)
+        for j in range(tests):
+            self.curr_state = n_move_state(n=self.depth + depth_from_baseline)
 
-        for i in range(max_steps):
-            # If the current state is not in the QV table
-            if not (self.curr_state.__hash__()) in self.QV.keys():
-                self.QV.update({self.curr_state.__hash__(): np.zeros(12)})
+            for i in range(max_steps):
+                # If the current state is not in the QV table
+                if not (self.curr_state.__hash__()) in self.QV.keys():
+                    self.QV.update({self.curr_state.__hash__(): np.zeros(12)})
 
-            action = self.chooseAction()
-            self.curr_state.move(self.actions[action])
+                action = self.chooseAction()
+                self.curr_state.move(self.actions[action])
 
-            if self.curr_state.isGoalState():
-                print('Made it')
-                return i
-        return max_steps
+                if self.curr_state.isGoalState():
+                    test_steps[j] = i
+                    break
+            if test_steps[j] == 0:
+                test_steps[j] = max_steps
+        return test_steps
 
     def reward(self, state, action):
         next_state = move(state, self.actions[action])
@@ -139,24 +150,83 @@ class Agent:
             return 0
 
 
+def saveData(trainingData, testData, title):
+    np.savetxt(f'{title}_training.txt', trainingData, fmt='%d')
+    np.savetxt(f'{title}_test.txt', testData, fmt='%d')
+    print(f'{title} saved.')
+
+
+def score(testData, max_steps=20):
+    return np.count_nonzero(testData < max_steps)
+
+
+def experiment():
+    # Due to compute time, train_depth = 4 was chosen
+    train_depth = 4
+    trainingEpochs = 5000
+    testCases = 1000
+
+    # etas = [i / 10 for i in range(10)]
+    # gammas = [i / 10 for i in range(10)]
+    test_depths = [i for i in range(10)]
+    eta = 0.3
+    gamma = 0.9
+
+    # eta_score = np.zeros(10)
+    # for i, eta in enumerate(etas):
+    #     agent = Agent(scramble_depth=train_depth)
+    #     agent.adi(train_depth)
+    #     training_steps = agent.QLearn(
+    #         epochs=trainingEpochs, steps=60, eta=eta, depth_from_baseline=2)
+    #     test_steps = agent.Play(depth_from_baseline=2, tests=testCases)
+    #     saveData(training_steps, test_steps, f'eta_{eta}')
+    #     eta_score[i] = score(test_steps)
+    # eta = etas[np.argmax(eta_score)]
+    # print(f'Best eta = {eta}')
+
+    # gamma_score = np.zeros(10)
+    # for i, gamma in enumerate(gammas):
+    #     agent = Agent(scramble_depth=train_depth)
+    #     agent.adi(train_depth)
+    #     training_steps = agent.QLearn(
+    #         epochs=trainingEpochs, steps=60, eta=eta, gamma=gamma, depth_from_baseline=2)
+    #     test_steps = agent.Play(depth_from_baseline=2, tests=testCases)
+    #     saveData(training_steps, test_steps, f'eta_{eta}_gamma_{gamma}')
+    #     gamma_score[i] = score(test_steps)
+    # gamma = gammas[np.argmax(gamma_score)]
+    # print(f'Best gamma = {gamma}')
+
+    depth_score = np.zeros(10)
+    for i, depth in enumerate(test_depths):
+        agent = Agent(scramble_depth=train_depth)
+        # agent.adi(train_depth)
+        training_steps = agent.QLearn(
+            epochs=trainingEpochs, steps=80, eta=eta, gamma=gamma, depth_from_baseline=depth)
+        test_steps = agent.Play(
+            depth_from_baseline=depth, tests=testCases)
+        saveData(training_steps, test_steps,
+                 f'eta_{eta}_gamma_{gamma}_testdepth_{depth}_withoutADI')
+        depth_score[i] = score(test_steps)
+    depth = test_depths[np.argmax(depth_score)]
+    print(f'Best depth = {depth}')
+
+
 if __name__ == '__main__':
-    agent = Agent(scramble_depth=5)
-    print("REGISTERING PATTERN DATABASE, THIS WILL TAKE A LITTLE WHILE")
+    experiment()
+    # train_depth = 3
+    # agent = Agent(scramble_depth=train_depth)
+    # print("REGISTERING PATTERN DATABASE, THIS WILL TAKE A LITTLE WHILE")
 
-    agent.adi(10, 1.0)
+    # agent.adi(train_depth, 1.0)
+    # # training_steps = np.zeros(training_episodes)
+    # # test_steps = np.zeros(test_episodes)
+    # # Epsilons = [i / training_episodes for i in range(training_episodes)]
+    # # Epsilons.reverse()
 
-    training_episodes = 1000
-    test_episodes = 2
-    training_steps = np.zeros(training_episodes)
-    test_steps = np.zeros(test_episodes)
-    Epsilons = [i / training_episodes for i in range(training_episodes)]
-    Epsilons.reverse()
+    # training_steps = agent.QLearn(epochs=100, steps=60)
+    # test_steps = agent.Play(max_steps=20, depth_from_baseline=1, tests=20)
 
-    for j, e in enumerate(Epsilons):
-        print("======= ROUND " + str(j) + "=========")
-        training_steps[j] = agent.QLearn(steps=60, epsilon=e)
-    for i in range(test_episodes):
-        test_steps[i] = agent.Play(max_steps=20)
+    # # print(training_steps)
+    # print(test_steps)
 
-    print(training_steps)
-    print(test_steps)
+    # TODO: Randomize the start training and start test cubes to figure out how many can actually be trained
