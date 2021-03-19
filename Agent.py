@@ -1,7 +1,8 @@
-import random, time
+import random
+import time
 from puzzle import State, move, num_solved_sides, num_pieces_correct_side, shuffle, n_move_state, one_move_state
-
-ALPHA = 0.6
+import numpy as np
+import pprint as pp
 
 
 # q-values key = (state, action) => value = (q-value, update_count)
@@ -10,261 +11,222 @@ class Agent:
     # initialize agent, can be passed a dictionary of Q-Values
     # if it already exists, and a cube, otherwise, initializes new
     # cube if not provided one
-    def __init__(self, QValues={}, scramble_depth: int = 5):
-        self.visited = []
-        self.visit_count = {}
-        self.revisits = 0
+    def __init__(self, QValues={}, scramble_depth: int = 3):
         # maps a state action pair to a Q-Value, and an update count for that Q-Value
         self.QV = QValues
-        # maps a state to a list of rewards for executing each possible outcome
-        # can index list of rewards using directional class constants
-        self.R = {}
         # create or store initial cube state, and store list of actions
         self.start_state = n_move_state(n=scramble_depth)
-        print(self.start_state)
-        # shuffle initially solved starting state, executing 5 random moves
-        # self.start_state = shuffle(self.start_state)
-        # store the current state
-        self.curr_state = self.start_state
-        self.prev_state = None
-        self.second_last_action = None
+        self.depth = scramble_depth
+        # print(self.start_state)
+        self.curr_state = self.start_state.copy()
         self.actions = self.start_state.actions
-        self.last_action = None
         self.move = {"front": 0, "back": 0, "left": 0, "right": 0, "top": 0, "bottom": 0, "afront": 0, "aback": 0,
                      "aleft": 0, "aright": 0, "atop": 0, "abottom": 0}
 
-    def register_patterns(self, to_depth: int = 1, with_reward_coefficient: float = 1.0) -> None:
-        states_with_rewards = []  # list of dictionaries, each dictionary a depth distance from the goal state
+    def adi(self, to_depth: int = 1, reward_coefficient: float = 1.0) -> None:
         goal_state = State()
-        states_with_rewards.append(
-            {goal_state: {(goal_state.__hash__(), None): to_depth * with_reward_coefficient * 10}})
+        states_with_rewards = []
+        states_with_rewards.append([goal_state])
+        qvTable = {goal_state.__hash__(): np.zeros(12)}
+
         for d in range(1, to_depth + 1):
-            states_to_rewards_at_this_depth = {}
-            reward = (to_depth + 1 - d) * with_reward_coefficient
+            reward = (to_depth + 1 - d)
 
+            states_at_depth = []
             for s in states_with_rewards[d - 1]:
-                for good_action in self.actions:
-                    s_ = move(s, good_action)
-                    states_to_rewards_at_this_depth[s_] = {(s_.__hash__(), good_action): reward}
-                    for bad_action in self.actions:
-                        if bad_action != good_action:
-                            states_to_rewards_at_this_depth[s_][(s_.__hash__(), bad_action)] = -1 * reward
-                states_with_rewards.append(states_to_rewards_at_this_depth)
+                for action in self.actions:
+                    s_ = move(s, action)
 
-        for state_with_reward in reversed(states_with_rewards):
-            for state, state_action_rewards in state_with_reward.items():
-                self.QV.update(state_action_rewards)
+                    if s_.__hash__() not in qvTable.keys():
+                        states_at_depth.append(s_)
+                        goodAction = self.reverse_action(action)
+                        qvTable.update(
+                            {s_.__hash__(): np.full(12, -1 * reward)})
+                        qvTable[s_.__hash__()][self.actions.index(
+                            goodAction)] = reward
+            states_with_rewards.append(states_at_depth)
+
+        self.QV = qvTable
+
+    # def register_patterns(self, to_depth: int = 1, with_reward_coefficient: float = 1.0) -> None:
+    #     # list of dictionaries, each dictionary a depth distance from the goal state
+    #     states_with_rewards = []
+    #     goal_state = State()
+    #     states_with_rewards.append(
+    #         {goal_state: {(goal_state.__hash__(), None): to_depth * with_reward_coefficient * 10}})
+    #     for d in range(1, to_depth + 1):
+    #         states_to_rewards_at_this_depth = {}
+    #         reward = (to_depth + 1 - d) * with_reward_coefficient
+
+    #         for s in states_with_rewards[d - 1]:
+    #             for good_action in self.actions:
+    #                 s_ = move(s, good_action)
+
+    #                 good_action = self.reverse_action(good_action)
+
+    #                 states_to_rewards_at_this_depth[s_] = {
+    #                     (s_.__hash__(), good_action): reward}
+    #                 for bad_action in self.actions:
+    #                     if bad_action != good_action and (s_.__hash__(), bad_action) not in states_to_rewards_at_this_depth[s_]:
+    #                         states_to_rewards_at_this_depth[s_][(
+    #                             s_.__hash__(), bad_action)] = -1*reward
+    #             states_with_rewards.append(states_to_rewards_at_this_depth)
+
+    #     for state_with_reward in reversed(states_with_rewards):
+    #         for state, state_action_rewards in state_with_reward.items():
+    #             self.QV.update(state_action_rewards)
+
+    def reverse_action(self, action):
+        if action[0] == 'a':
+            return action[1:]
+        else:
+            return f'a{action}'
 
     # explore
-    def QLearn(self, discount=0.99, episodes=10, epsilon=0.9):
+    def QLearn(self, epochs=100, gamma=0.99, steps=20, epsilon=0.9, eta=0.6, depth_from_baseline=1):
         # execute q learning for specified number of episodes
-        self.curr_state = self.curr_state  # six_move_state()
-        for i in range(episodes):
-            print("=====EPISODE " + str(i) + "=====")
-            print("====CURR STATE========")
-            print("======================")
-            # initialize values in Q-State dictionary for 
-            # any state action pairs including current state
-            # that are null
-            saved_rewards = self.curr_state.__hash__() in self.R.keys()
-            if not saved_rewards:
-                self.R[self.curr_state.__hash__()] = []
-            if not self.curr_state.__hash__ in self.visit_count:
-                self.visit_count[self.curr_state.__hash__()] = 1
-            else:
-                self.visit_count[self.curr_state.__hash__()] += 1
-            vc = self.visit_count[self.curr_state.__hash__()]
-            # initialize Q-Values of 0 for all state action pairs
-            # for the given, state, if they do not exist
-            for action in self.actions:
-                if not (self.curr_state.__hash__(), action) in self.QV.keys():
-                    self.QV[(self.curr_state.__hash__(), action)] = 0
-                else:
-                    self.revisits += 1
+        steps_required = np.zeros(epochs)
+        Epsilons = [i / epochs for i in range(epochs)]
+        Epsilons.reverse()
+        for j in range(epochs):
+            self.curr_state = n_move_state(
+                n=self.depth + depth_from_baseline)  # six_move_state()
+            for i in range(steps):
+                if not (self.curr_state.__hash__()) in self.QV.keys():
+                    self.QV.update({self.curr_state.__hash__(): np.zeros(12)})
+                # Observe current state
+                state = self.curr_state.copy()
+                # Choose an action using epsilon greedy
+                action = self.chooseAction(Epsilons[j])
+                # Perform the action and receive reward
+                reward = self.reward(state, action)
+                self.curr_state.move(self.actions[action])
+                if not (self.curr_state.__hash__()) in self.QV.keys():
+                    self.QV.update({self.curr_state.__hash__(): np.zeros(12)})
+                # Update Q Table
+                self.QV[state.__hash__()][action] = self.QV[state.__hash__()][action] + eta * (
+                    reward + gamma*np.max(self.QV[self.curr_state.__hash__()]) - self.QV[state.__hash__()][action])
+
+                # Check for end state
+                if self.curr_state.isGoalState():
+                    steps_required[j] = i
                     break
-                if not saved_rewards:
-                    self.R[self.curr_state.__hash__()].append(self.reward(self.curr_state, action))
-            if 100 in self.R[self.curr_state.__hash__()]:
-                print("REACHED GOAL, END QLEARN ITERATION")
-                return
-            follow_policy = random.uniform(0, 1.0)
-            print("random value generated is " + str(follow_policy))
-            # if random number is > epsilon, we must select best move
-            # by the highest q-value
-            if follow_policy > epsilon:
-                print("FOLLOWING POLICY")
-                for action in self.actions:
-                    print("q value for action " + action + " from curr state is " + str(
-                        self.QV[(self.curr_state.__hash__(), action)]))
-                best_action = None
-                best_QV = -100000000
-                for action in self.actions:
-                    if self.QV[(self.curr_state.__hash__(),
-                                action)] > best_QV and action != self.last_action and action != self.second_last_action:
-                        best_action = action
-                        best_QV = self.QV[(self.curr_state.__hash__(), action)]
-                if best_QV == 0:
-                    best_action = random.choice(self.actions)
-                    while best_action == self.last_action:
-                        best_action = random.choice(self.actions)
-                print("actions chosen = " + best_action)
-                self.move[best_action] = self.move[best_action] + 1
-                # update Q-Value for current state and action chosen based on the current policy, by taking original Q-value, and adding
-                # alpha times the reward value of the new state plus the discounted max_reward of executing every possible
-                # action on the new state, minus the original Q-Value
-                # reward = self.reward(self.curr_state, best_action)
-                # max_reward = self.max_reward(self.curr_state, best_action)
-                # self.QV[(self.curr_state.__hash__(), best_action)] = best_QV + ALPHA*(reward +\
-                #                                         discount*max_reward - best_QV)
-                for action in self.actions:
-                    curr_QV = self.QV[(self.curr_state.__hash__(), action)]
-                    reward = self.reward(self.curr_state, action)
-                    max_reward = self.max_reward(self.curr_state, action)
-                    self.QV[(self.curr_state.__hash__(), action)] = curr_QV + ALPHA * (reward + \
-                                                                                       (
-                                                                                               discount ** vc) * max_reward - curr_QV)
-                print("new q value for " + best_action + " action is " + str(
-                    self.QV[(self.curr_state.__hash__(), best_action)]))
-                self.curr_state.move(best_action)
-                self.curr_state = self.curr_state.copy()
+            if steps_required[j] == 0:
+                steps_required[j] = steps
+        return steps_required
+
+    def chooseAction(self, epsilon=0):
+        if np.random.rand() < (1 - epsilon):
+            action = np.argmax(self.QV[self.curr_state.__hash__()])
+        else:
+            action = np.random.randint(0, 11)
+        return action
+
+    def Play(self, max_steps=20, depth_from_baseline=1, tests=1):
+        test_steps = np.zeros(tests)
+        for j in range(tests):
+            self.curr_state = n_move_state(n=self.depth + depth_from_baseline)
+
+            for i in range(max_steps):
+                # If the current state is not in the QV table
+                if not (self.curr_state.__hash__()) in self.QV.keys():
+                    self.QV.update({self.curr_state.__hash__(): np.zeros(12)})
+
+                action = self.chooseAction()
+                self.curr_state.move(self.actions[action])
+
                 if self.curr_state.isGoalState():
-                    print("reached goal state while in Q-learning epsiode " + str(i))
-                    # time.sleep(2)
-                    return
-                self.second_last_action = self.last_action
-                self.last_action = best_action
-            else:
-                # pick random move
-                action = random.choice(self.actions)
-                self.move[action] = self.move[action] + 1
-                while action == self.last_action or action == self.second_last_action:
-                    action = random.choice(self.actions)
-                # update Q-Value for current state and randomly chosen action, by taking original Q-value, and adding
-                # alpha times the reward value of the new state plus the discounted max_reward of executing every possible
-                # action on the new state, minus the original Q-Value
-                # reward = self.reward(self.curr_state, action)
-                # max_reward = self.max_reward(self.curr_state, action)
-                # print("max reward... " + str(max_reward))
-                # print("reward... " + str(reward))
-                # self.QV[(self.curr_state.__hash__(), action)] = curr_QV + ALPHA*(reward +\
-                # discount*max_reward - curr_QV)
-                reward = 0
-                for action in self.actions:
-                    curr_QV = self.QV[(self.curr_state.__hash__(), action)]
-                    reward = self.reward(self.curr_state, action)
-                    max_reward = self.max_reward(self.curr_state, action)
-                    self.QV[(self.curr_state.__hash__(), action)] = curr_QV + ALPHA * (reward + \
-                                                                                       (
-                                                                                               discount ** vc) * max_reward - curr_QV)
-
-                # print(self.reward(self.curr_state,action))
-                # print(self.QV[(self.curr_state,action)])
-                self.curr_state.move(action)
-                self.curr_state = self.curr_state.copy()
-                self.second_last_action = self.last_action
-                self.last_action = action
-                if self.curr_state.isGoalState():
-                    print("reached goal state while in Q-learning epsiode " + str(i))
-                    # time.sleep(2)
-                    return
-
-    def Play(self):
-        self.second_last_action = None
-        self.last_action = None
-        self.curr_state = self.start_state
-        print(self.curr_state)
-        for i in range(20):
-            best_action = None
-            best_QV = -100000000
-            if not (self.curr_state.__hash__(), self.actions[0]) in self.QV.keys():
-                best_action = random.choice(self.actions)
-                while best_action == self.second_last_action or best_action == self.last_action:
-                    best_action = random.choice(self.actions)
-                for action in self.actions:
-                    self.QV[(self.curr_state.__hash__(), action)] = 0
-                best_QV = 0
-            else:
-                for action in self.actions:
-                    if self.QV[(self.curr_state.__hash__(), action)] > best_QV \
-                            and (action != self.last_action and action != self.second_last_action):
-                        best_action = action
-                        best_QV = self.QV[(self.curr_state.__hash__(), action)]
-                # if best_QV == 0:
-                #    best_action = random.choice(self.actions)
-                #    while best_action == self.last_action or best_action == self.second_last_action:
-                #        best_action = random.choice(self.actions)
-            print("actions chosen = " + best_action)
-            print("last action = " + (self.last_action if self.last_action is not None else "None"))
-            print("q value is " + str(self.QV[(self.curr_state.__hash__(), best_action)]))
-            # time.sleep(1)
-            self.curr_state.move(best_action)
-            self.second_last_action = self.last_action
-            self.last_action = best_action
-            print(self.curr_state)
-            if self.curr_state.isGoalState():
-                print("AGENT REACHED A GOAL STATE!!!")
-                # time.sleep(5)
-                return
-
-    def print_(self):
-        print("=============")
-        x = 0
-        y = 0
-        for key in self.QV.keys():
-            if self.QV[key] != 0:
-                x += 1
-            else:
-                y += 1
-        print("number of q values in dictionary is " + str(x + y))
-        print("number of q values with zero value is " + str(y))
-        print("number of q value with non zero value is " + str(x))
-        print("number of re visited states = " + str(self.revisits))
-        print(self.move)
+                    test_steps[j] = i
+                    break
+            if test_steps[j] == 0:
+                test_steps[j] = max_steps
+        return test_steps
 
     def reward(self, state, action):
-        # this reward function should be a function approximation made up of
-        # a set of features, these features should be in decreasing order of priority:
-        # 1. solved sides ()
-        # use next state to get value for next state vs. self.curr_state, to determine
-        # if feature values should be 1 or 0, e.g. if solved_sides(next_state) > solved_sides(self.curr_state)
-        # then the solved sides feature is 1, else 0
-        next_state = move(state, action)
+        next_state = move(state, self.actions[action])
         if next_state.isGoalState():
-            print(state)
-            print(next_state)
-            print("REWARD IS GOAL")
             return 100
-        reward = -0.1
-        solved_sides = 2 * (num_solved_sides(next_state) < num_solved_sides(state))
-        solved_pieces = 0.5 * (num_pieces_correct_side(next_state) < num_pieces_correct_side(state))
-        if (next_state.__hash__(), action) in self.QV.keys():
-            reward -= 0.2
-        reward -= solved_sides
-        reward -= solved_pieces
-        return reward
-
-    def max_reward(self, state, action):
-        new_state = move(state, action)
-        if not new_state in self.R.keys():
-            self.R[new_state] = []
-            for action in self.actions:
-                self.R[new_state].append(self.reward(new_state, action))
-        return max(self.R[new_state])
-    # execute Q-value iteration
-
-    # run based on current policy
+        else:
+            return 0
 
 
-agent = Agent()
-print("REGISTERING PATTERN DATABASE, THIS WILL TAKE A LITTLE WHILE")
-agent.register_patterns(10, 5.0)
-print(agent.QV)
-Epsilons = [i / 50 for i in range(50)]
-Epsilons.reverse()
-for i in range(2):
-    for j, e in enumerate(Epsilons):
-        print("======= ROUND " + str(j) + "=========")
-        agent.QLearn(epsilon=e)
-print("there are " + str(len(agent.QV)) + " keys in Q Table")
-agent.Play()
-agent.print_()
+def saveData(trainingData, testData, title):
+    np.savetxt(f'{title}_training.txt', trainingData, fmt='%d')
+    np.savetxt(f'{title}_test.txt', testData, fmt='%d')
+    print(f'{title} saved.')
+
+
+def score(testData, max_steps=20):
+    return np.count_nonzero(testData < max_steps)
+
+
+def experiment():
+    # Due to compute time, train_depth = 4 was chosen
+    train_depth = 4
+    trainingEpochs = 5000
+    testCases = 1000
+
+    # etas = [i / 10 for i in range(10)]
+    # gammas = [i / 10 for i in range(10)]
+    test_depths = [i for i in range(10)]
+    eta = 0.3
+    gamma = 0.9
+
+    # eta_score = np.zeros(10)
+    # for i, eta in enumerate(etas):
+    #     agent = Agent(scramble_depth=train_depth)
+    #     agent.adi(train_depth)
+    #     training_steps = agent.QLearn(
+    #         epochs=trainingEpochs, steps=60, eta=eta, depth_from_baseline=2)
+    #     test_steps = agent.Play(depth_from_baseline=2, tests=testCases)
+    #     saveData(training_steps, test_steps, f'eta_{eta}')
+    #     eta_score[i] = score(test_steps)
+    # eta = etas[np.argmax(eta_score)]
+    # print(f'Best eta = {eta}')
+
+    # gamma_score = np.zeros(10)
+    # for i, gamma in enumerate(gammas):
+    #     agent = Agent(scramble_depth=train_depth)
+    #     agent.adi(train_depth)
+    #     training_steps = agent.QLearn(
+    #         epochs=trainingEpochs, steps=60, eta=eta, gamma=gamma, depth_from_baseline=2)
+    #     test_steps = agent.Play(depth_from_baseline=2, tests=testCases)
+    #     saveData(training_steps, test_steps, f'eta_{eta}_gamma_{gamma}')
+    #     gamma_score[i] = score(test_steps)
+    # gamma = gammas[np.argmax(gamma_score)]
+    # print(f'Best gamma = {gamma}')
+
+    depth_score = np.zeros(10)
+    for i, depth in enumerate(test_depths):
+        agent = Agent(scramble_depth=train_depth)
+        # agent.adi(train_depth)
+        training_steps = agent.QLearn(
+            epochs=trainingEpochs, steps=80, eta=eta, gamma=gamma, depth_from_baseline=depth)
+        test_steps = agent.Play(
+            depth_from_baseline=depth, tests=testCases)
+        saveData(training_steps, test_steps,
+                 f'eta_{eta}_gamma_{gamma}_testdepth_{depth}_withoutADI')
+        depth_score[i] = score(test_steps)
+    depth = test_depths[np.argmax(depth_score)]
+    print(f'Best depth = {depth}')
+
+
+if __name__ == '__main__':
+    experiment()
+    # train_depth = 3
+    # agent = Agent(scramble_depth=train_depth)
+    # print("REGISTERING PATTERN DATABASE, THIS WILL TAKE A LITTLE WHILE")
+
+    # agent.adi(train_depth, 1.0)
+    # # training_steps = np.zeros(training_episodes)
+    # # test_steps = np.zeros(test_episodes)
+    # # Epsilons = [i / training_episodes for i in range(training_episodes)]
+    # # Epsilons.reverse()
+
+    # training_steps = agent.QLearn(epochs=100, steps=60)
+    # test_steps = agent.Play(max_steps=20, depth_from_baseline=1, tests=20)
+
+    # # print(training_steps)
+    # print(test_steps)
+
+    # TODO: Randomize the start training and start test cubes to figure out how many can actually be trained
